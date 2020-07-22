@@ -1,0 +1,13 @@
+# https://travis-ci.org/#!/phlax/envoy-examples
+
+dist: bionic
+
+env:
+  jobs:
+    - ENVOYDEV_UMASK=027 ENVOY_REPO="-b copy-configs-into-example-images https://github.com/phlax/envoy"
+
+script:
+  - export COMPOSE_FILE=./composition/docker-compose.yml
+  - docker-compose up -d
+  - docker-compose logs
+  - docker-compose exec envoy-examples run-envoy-examples
