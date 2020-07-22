@@ -1,0 +1,317 @@
+#!/bin/bash -e
+
+
+echo -e "\n> ...Running as $(whoami)"
+echo -e "\n> Set $(whoami) user umask ($ENVOYDEV_UMASK)"
+umask $ENVOYDEV_UMASK
+
+
+show_user_env () {
+    echo -e "\n> User env"
+    id
+    echo "umask = $(umask)"
+    echo "pwd = $(pwd)"
+    echo -e "\n> Docker ps"
+    docker ps
+}
+
+clone_envoy_repo () {
+    echo -e "\n> Clone envoy repository ($ENVOY_REPO)"
+    git clone $ENVOY_REPO
+}
+
+get_path () {
+    printf "%s/envoy/examples/%s" "$HOME" "$1"
+}
+
+bring_up_example () {
+    local args name path snooze
+    args=("${@}")
+    name="$1"
+    path="$2"
+    snooze="${3:-0}"
+    cd "$path"
+    echo -e "\n> [${name}] Pull the images"
+    docker-compose pull || return 1
+    echo
+    echo -e "\n> [${name}] Bring up services"
+    docker-compose up --build -d "${args[@]:3}" || return 1
+    if [ "$snooze" -ne "0" ]; then
+	echo -e "\n> [${name}] Snooze for ${snooze} while ${name} gets started"
+	sleep "$snooze"
+    fi
+    docker-compose ps
+    docker-compose logs
+}
+
+cleanup () {
+    local name path
+    name="$1"
+    path="$2"
+    echo -e "\n> [$name] Cleanup: $path"
+    docker-compose down
+    cd "$path"
+    docker-compose down
+    docker system prune -f
+}
+
+run_example_cors () {
+    local exit_code
+    exit_code=0
+    bring_up_example cors "$(get_path cors/frontend)"
+    bring_up_example cors "$(get_path cors/backend)"
+
+    echo -e "\n> [cors] Test services"
+    curl http://localhost:8000 || exit_code=1
+    curl http://localhost:8002/cors/disabled || exit_code=1
+
+    cleanup cors "$(get_path cors/frontend)"
+    cleanup cors "$(get_path cors/backend)"
+    return "$exit_code"
+}
+
+
+run_example_csrf () {
+    local exit_code
+    exit_code=0
+    bring_up_example csrf "$(get_path csrf/samesite)"
+    bring_up_example csrf "$(get_path csrf/crosssite)"
+
+    echo -e "\n> [csrf] Test services"
+    curl http://localhost:8002 || exit_code=1
+    curl http://localhost:8000 || exit_code=1
+    curl http://localhost:8001/stats || exit_code=1
+    curl http://localhost:8000/csrf/disabled
+
+    cleanup csrf "$(get_path csrf/samesite)"
+    cleanup csrf "$(get_path csrf/crosssite)"
+    return "$exit_code"
+}
+
+run_example_ext_authz () {
+    local exit_code
+    exit_code=0
+    bring_up_example ext_authz "$(get_path ext_authz)" || exit_code=1
+
+    echo -e "\n> [ext_authz] Test service responds with 403"
+    curl -v localhost:8000/service 2> >(grep -v Expire)
+
+    echo -e "\n> [ext_authz] Restart front-envoy with FRONT_ENVOY_YAML=config/http-service.yaml"
+    docker-compose down
+    FRONT_ENVOY_YAML=config/http-service.yaml docker-compose up -d || exit_code=1
+    sleep 10
+
+    echo -e "\n> [ext_authz] Test service responds with 403"
+    curl -v localhost:8000/service  2> >(grep -v Expire)
+
+    echo -e "\n> [ext_authz] Test authenticated service responds with 200"
+    curl -v -H "Authorization: Bearer token1" localhost:8000/service 2> >(grep -v Expire) || exit_code=1
+
+    echo -e "\n> [ext_authz] Restart front-envoy with FRONT_ENVOY_YAML=config/opa-service/v2.yaml"
+    docker-compose down
+    FRONT_ENVOY_YAML=config/opa-service/v2.yaml docker-compose up -d || exit_code=1
+    sleep 10
+
+    echo -e "\n> [ext_authz] Test OPA service responds with 200"
+    curl localhost:8000/service --verbose 2> >(grep -v Expire) || exit_code=1
+
+    echo -e "\n> [ext_authz] Check OPA logs"
+    docker-compose logs ext_authz-opa-service | grep decision_id -A 30 || exit_code=1
+
+    echo -e "\n> [ext_authz] Check OPA service rejects POST"
+    curl -X POST localhost:8000/service --verbose 2> >(grep -v Expire)
+
+    cleanup ext_authz "$(get_path ext_authz)"
+    return "$exit_code"
+}
+
+_fault_injection_test () {
+    local action code
+    action="$1"
+    code="$2"
+
+    echo -e "\n> [fault_injection] Enable ${action} fault injection"
+    docker-compose exec envoy bash "enable_${action}_fault_injection.sh"
+    echo -e "\n> [fault_injection] Send requests for 20 seconds"
+    docker-compose exec envoy bash -c "bash send_request.sh & export pid=\$! && sleep 20 && kill \$pid" > /dev/null
+    echo -e "\n> [fault_injection] Check logs again"
+    docker-compose logs | grep "HTTP/1.1\" ${code}"
+
+    echo -e "\n> [fault_injection] Disable ${action} fault injection"
+    docker-compose exec envoy bash "disable_${action}_fault_injection.sh"
+    echo -e "\n> [fault_injection] Send requests for 20 seconds"
+    docker-compose exec envoy bash -c "bash send_request.sh & export pid=\$! && sleep 20 && kill \$pid" > /dev/null
+    echo -e "\n> [fault_injection] Check logs again"
+    docker-compose logs | grep "HTTP/1.1\" 200"
+
+}
+
+run_example_fault_injection () {
+    bring_up_example fault_injection "$(get_path fault-injection)"
+
+    echo -e "\n> [fault_injection] Send requests for 20 seconds"
+    docker-compose exec envoy bash -c "bash send_request.sh & export pid=\$! && sleep 20 && kill \$pid" > /dev/null
+
+    echo -e "\n> [fault_injection] Check logs"
+    docker-compose logs | grep "HTTP/1.1\" 200"
+
+    _fault_injection_test abort 503
+    _fault_injection_test delay 200
+
+    echo -e "\n> [fault_injection] Check tree"
+    docker-compose exec envoy tree /srv/runtime
+
+    cleanup fault_injection "$(get_path fault-injection)"
+}
+
+run_example_jaeger_native_tracing () {
+    bring_up_example jaeger_native "$(get_path jaeger-native-tracing)"  || exit_code=1
+
+    echo -e "\n> [jaeger_native] Test services"
+    curl -v localhost:8000/trace/1  2> >(grep -v Expire) || exit_code=1
+
+    echo -e "\n> [jaeger_native] Test Jaeger UI"
+    curl http://localhost:16686 2> >(grep -v Expire) || exit_code=1
+
+    cleanup jaeger_native "$(get_path jaeger-native-tracing)"
+}
+
+run_example_jaeger_tracing () {
+    local exit_code
+    exit_code=0
+    bring_up_example jaeger "$(get_path jaeger-tracing)"  || exit_code=1
+
+    echo -e "\n> [jaeger] Test services"
+    curl -v localhost:8000/trace/1  2> >(grep -v Expire) || exit_code=1
+
+    echo -e "\n> [jaeger] Test Jaeger UI"
+    curl http://localhost:16686 2> >(grep -v Expire) || exit_code=1
+
+    cleanup jaeger "$(get_path jaeger-tracing)"
+    return "$exit_code"
+}
+
+run_example_load_reporting () {
+    bring_up_example load_reporting "$(get_path load-reporting-service)" 0 --scale http_service=2
+
+    echo -e "\n> [load_reporting] Send requests"
+    bash send_requests.sh 2> >(grep -v Expire)
+    echo -e "\n> [load_reporting] Check logs"
+    docker-compose logs
+
+    cleanup load_reporting "$(get_path load-reporting-service)"
+}
+
+run_example_lua () {
+    bring_up_example lua "$(get_path lua)"
+
+    echo -e "\n> [lua] Test connection"
+    curl -v localhost:8000 2> >(grep -v Expire)
+
+    cleanup lua "$(get_path lua)"
+}
+
+run_example_mysql () {
+    bring_up_example mysql "$(get_path mysql)" 10
+
+    echo -e "\n> [mysql] Create a database and table"
+    docker run -ti --network envoymesh mysql:5.5 mysql -h envoy -P 1999 -u root -e "CREATE DATABASE test;"
+    docker run -ti --network envoymesh mysql:5.5 mysql -h envoy -P 1999 -u root -e "show databases;"
+    docker run -ti --network envoymesh mysql:5.5 mysql -h envoy -P 1999 -u root -e "USE test; CREATE TABLE test ( text VARCHAR(255) );"
+    docker run -ti --network envoymesh mysql:5.5 mysql -h envoy -P 1999 -u root -e "SELECT COUNT(*) from test.test;"
+
+    echo -e "\n> [mysql] Check mysql egress stats"
+    curl -s http://localhost:8001/stats?filter=egress_mysql
+
+    echo -e "\n> [mysql] Check mysql TCP stats"
+    curl -s http://localhost:8001/stats?filter=mysql_tcp
+
+    cleanup mysql "$(get_path mysql)"
+}
+
+run_example_zipkin_tracing () {
+    bring_up_example zipkin "$(get_path zipkin-tracing)"
+
+    echo -e "\n> [zipkin] Test connection"
+    curl -v localhost:8000/trace/1  2> >(grep -v Expire)
+
+    echo -e "\n> [zipkin] Test dashboard"
+    # this could do with using a healthcheck and waiting
+    sleep 20
+    curl localhost:9411/zipkin/
+
+    cleanup zipkin "$(get_path zipkin-tracing)"
+}
+
+run_example_front_proxy () {
+    bring_up_example front_proxy "$(get_path front-proxy)"
+
+    echo -e "\n> [front_proxy] Curl localhost:8080/service/1"
+    curl -v localhost:8080/service/1 2> >(grep -v Expire)
+    echo -e "\n> [front_proxy] Curl localhost:8080/service/2"
+    curl -v localhost:8080/service/2 2> >(grep -v Expire)
+    echo -e "\n> [front_proxy] Curl https://localhost:8443/service/1 -k -v"
+    curl https://localhost:8443/service/1 -k -v 2> >(grep -v Expire)
+    echo -e "\n> [front_proxy] Scale up docker service1=3"
+    docker-compose scale service1=3
+
+    echo -e "\n> [front_proxy] Snooze for 5 while docker-compose scales..."
+    sleep 5
+
+    curl -v localhost:8080/service/1 2> >(grep -v Expire)
+    echo -e "\n> [front_proxy] Curl round-robin localhost:8080/service/1"
+    docker-compose exec front-envoy bash -c "\
+    		   curl localhost:8080/service/1 \
+		   && curl localhost:8080/service/1 \
+		   && curl localhost:8080/service/1"
+    echo -e "\n> [front_proxy] Curl localhost:8080/service/2"
+    docker-compose exec front-envoy curl localhost:8080/service/2 2> >(grep -v Expire)
+    echo -e "\n> [front_proxy] Curl localhost:8080/server_info"
+    docker-compose exec front-envoy curl localhost:8001/server_info | jq '.'
+    echo -e "\n> [front_proxy] Curl localhost:8080/stats"
+    docker-compose exec front-envoy curl localhost:8001/stats
+
+    cleanup front_proxy "$(get_path front-proxy)"
+}
+
+
+run_example_grpc_bridge () {
+    cd "$HOME/envoy/examples/grpc-bridge"
+    echo -e "\n> [grpc-bridge] Bootstrap"
+    script/bootstrap.sh
+
+    echo -e "\n> [grpc-bridge] Create gopath"
+    mkdir /tmp/build/src/github.com/envoyproxy
+    export GOPATH=/tmp/build
+    cp -a "${HOME}/envoy" /tmp/build/src/github.com/envoyproxy/envoy
+
+    echo -e "\n> [grpc-bridge] Build"
+    script/build.sh
+
+    docker-compose down
+    docker system prune -f
+}
+
+FAILED=()
+
+show_user_env
+clone_envoy_repo
+run_example_cors || FAILED+=(cors)
+run_example_csrf || FAILED+=(csrf)
+run_example_ext_authz || FAILED+=(ext_authz)
+run_example_fault_injection || FAILED+=(fault_injection)
+run_example_front_proxy || FAILED+=(front_proxy)
+# BROKE #run_example_grpc_bridge
+run_example_jaeger_native_tracing || FAILED+=(jaeger_native)
+run_example_jaeger_tracing || FAILED+=(jaeger)
+run_example_load_reporting || FAILED+=(load_reporting)
+run_example_lua || FAILED+=(lua)
+run_example_mysql || FAILED+=(mysql)
+run_example_zipkin_tracing || FAILED+=(zipkin)
+
+if [ "${#FAILED[@]}" -ne "0" ]; then
+    for failed in "${FAILED[@]}"; do
+	echo "FAILURE: $failed"
+    done
+    exit 1
+fi
