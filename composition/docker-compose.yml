@@ -9,7 +9,8 @@ services:
         condition: service_healthy
 
   envoy-examples:
-    image: phlax/docker-in-docker
+    build:
+      context: ../context
     tty: true
     privileged: true
 
@@ -18,17 +19,7 @@ services:
       - ENVOY_REPO
 
     volumes:
-      - ${PWD}/run-envoy-examples:/usr/local/bin/run-envoy-examples
       - ${PWD}/run-tests-as-envoydev:/usr/local/bin/run-tests-as-envoydev
 
       # persist docker images etc
       - ${PWD}/docker:/var/lib/docker
-
-      # systemd requirement
-      - /sys/fs/cgroup:/sys/fs/cgroup:ro
-
-    tmpfs:
-      # systemd requires these to be on tmpfs
-      - /run
-      - /run/lock
-      - /tmp

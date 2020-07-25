@@ -7,9 +7,8 @@ env:
     - ENVOYDEV_UMASK=027 ENVOY_REPO="-b copy-configs-into-example-images https://github.com/phlax/envoy"
 
 script:
-  - shellcheck -x run-envoy-examples
   - shellcheck -x run-tests-as-envoydev
   - export COMPOSE_FILE=./composition/docker-compose.yml
-  - docker-compose up -d
+  - docker-compose up --build -d
   - docker-compose logs
-  - docker-compose exec envoy-examples run-envoy-examples
+  - docker-compose exec -u envoydev envoy-examples run-tests-as-envoydev
