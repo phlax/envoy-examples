@@ -219,11 +219,10 @@ run_example_jaeger_native_tracing () {
     name=jaeger_native
     paths=jaeger-native-tracing
 
-    bring_up_example "$name" "$paths" 60
+    bring_up_example "$name" "$paths" 10
 
     run_log "$name" "Test services"
-    # this replies with an empty response
-    curl -v localhost:8000/trace/1  2> >(grep -v Expire) || :
+    curl -v localhost:8000/trace/1  2> >(grep -v Expire)
 
     run_log "$name" "Test Jaeger UI"
     curl http://localhost:16686 2> >(grep -v Expire)
