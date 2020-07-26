@@ -214,6 +214,32 @@ run_example_fault_injection () {
     cleanup "$name" "$paths"
 }
 
+run_example_grpc_bridge () {
+    local name paths
+    name=grpc_bridge
+    paths=grpc-bridge
+
+    run_log "$name" "Generate protocol stubs"
+    cd "$(get_path grpc-bridge)" || return 1
+    docker-compose -f docker-compose-protos.yaml up
+    docker container prune -f
+
+    # shellcheck disable=SC2010
+    ls -la client/kv/kv_pb2.py | grep kv_pb2.py
+    # shellcheck disable=SC2010
+    ls -la server/kv/kv.pb.go | grep kv.pb.go
+
+    bring_up_example "$name" "$paths"
+
+    run_log "$name" "Set key value foo=bar"
+    docker-compose exec grpc-client /client/grpc-kv-client.py set foo bar | grep setf
+
+    run_log "$name" "Get key foo"
+    docker-compose exec grpc-client /client/grpc-kv-client.py get foo | grep bar
+
+    cleanup "$name" "$paths"
+}
+
 run_example_jaeger_native_tracing () {
     local name paths
     name=jaeger_native
@@ -363,7 +389,7 @@ run_example_csrf
 run_example_ext_authz
 run_example_fault_injection
 run_example_front_proxy
-# BROKE #run_example_grpc_bridge
+run_example_grpc_bridge
 run_example_jaeger_native_tracing
 run_example_jaeger_tracing
 run_example_load_reporting
