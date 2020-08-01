@@ -108,9 +108,28 @@ run_example_cors () {
     run_log "$name" "Test service"
     curl http://localhost:8000
 
-    run_log "$name" "Test cors server"
-    curl http://localhost:8002/cors/disabled
+    run_log "$name" "Test cors server: disabled"
+    curl -s -H "Origin: http://example.com" http://localhost:8002/cors/disabled | grep Success
+    curl -s -H "Origin: http://example.com" \
+	 --head http://localhost:8002/cors/disabled \
+	| grep access-control-allow-origin \
+	| [ "$(wc -l)" -eq 0 ] || return 1
 
+    run_log "$name" "Test cors server: open"
+    curl -s -H "Origin: http://example.com" http://localhost:8002/cors/open | grep Success
+    curl -s -H "Origin: http://example.com" \
+	 --head http://localhost:8002/cors/open \
+	| grep "access-control-allow-origin: http://example.com"
+
+    run_log "$name" "Test cors server: restricted"
+    curl -s -H "Origin: http://example.com" http://localhost:8002/cors/restricted | grep Success
+    curl -s -H "Origin: http://example.com" \
+	 --head http://localhost:8002/cors/restricted \
+	| grep access-control-allow-origin \
+	| [ "$(wc -l)" -eq 0 ] || return 1
+    curl -s -H "Origin: http://foo.envoyproxy.io" \
+	 --head http://localhost:8002/cors/restricted \
+	| grep "access-control-allow-origin: http://foo.envoyproxy.io"
     cleanup "$name" "$paths"
 }
 
