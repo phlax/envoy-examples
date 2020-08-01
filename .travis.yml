@@ -4,7 +4,7 @@ dist: bionic
 
 env:
   jobs:
-    - ENVOYDEV_UMASK=027 ENVOY_REPO="-b copy-configs-into-example-images https://github.com/phlax/envoy"
+    - ENVOYDEV_UMASK=027 ENVOY_REPO="-b copy-configs-into-example-images--testing https://github.com/phlax/envoy"
 
 script:
   - shellcheck -x run-tests-as-envoydev
