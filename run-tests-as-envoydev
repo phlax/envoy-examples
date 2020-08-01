@@ -147,8 +147,37 @@ run_example_csrf () {
     run_log "$name" "Test stats server"
     curl http://localhost:8001/stats
 
-    run_log "$name" "Test cors server"
-    curl http://localhost:8000/csrf/disabled
+    run_log "$name" "Test cors server: disabled"
+    curl -s -H "Origin: http://example.com" -X POST \
+	 http://localhost:8000/csrf/disabled \
+	| grep Success
+    curl -s -H "Origin: http://example.com" -X POST \
+	 --head http://localhost:8000/csrf/disabled \
+	| grep "access-control-allow-origin: http://example.com"
+
+    run_log "$name" "Test cors server: shadow"
+    curl -s -H "Origin: http://example.com" -X POST \
+	 http://localhost:8000/csrf/shadow \
+	| grep Success
+    curl -s -H "Origin: http://example.com" -X POST \
+	 --head http://localhost:8000/csrf/shadow \
+	| grep "access-control-allow-origin: http://example.com"
+
+    run_log "$name" "Test cors server: enabled"
+    curl -s -H "Origin: http://example.com" -X POST \
+	 http://localhost:8000/csrf/enabled \
+	| grep "Invalid origin"
+    curl -s -H "Origin: http://example.com" -X POST \
+	 --head http://localhost:8000/csrf/enabled \
+	| grep "HTTP/1.1 403 Forbidden"
+
+    run_log "$name" "Test cors server: additional_origin"
+    curl -s -H "Origin: http://example.com" -X POST \
+	 http://localhost:8000/csrf/additional_origin \
+	| grep Success
+    curl -s -H "Origin: http://example.com" -X POST \
+	 --head http://localhost:8000/csrf/additional_origin \
+	| grep "access-control-allow-origin: http://example.com"
 
     cleanup "$name" "$paths"
 }
