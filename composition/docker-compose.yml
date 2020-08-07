@@ -19,7 +19,5 @@ services:
       - ENVOY_REPO
 
     volumes:
-      - ${PWD}/run-tests-as-envoydev:/usr/local/bin/run-tests-as-envoydev
-
       # persist docker images etc
       - ${PWD}/docker:/var/lib/docker
