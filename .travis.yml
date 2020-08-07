@@ -4,11 +4,11 @@ dist: bionic
 
 env:
   jobs:
-    - ENVOYDEV_UMASK=027 ENVOY_REPO="-b copy-configs-into-example-images--testing https://github.com/phlax/envoy"
+    - ENVOYDEV_UMASK=027 ENVOY_REPO="-b verify-examples-reprise https://github.com/phlax/envoy"
 
 script:
   - shellcheck -x run-tests-as-envoydev
   - export COMPOSE_FILE=./composition/docker-compose.yml
   - docker-compose up --build -d
   - docker-compose logs
-  - docker-compose exec -u envoydev envoy-examples run-tests-as-envoydev
+  - docker-compose exec -u envoydev envoy-examples run-envoy-example-tests
