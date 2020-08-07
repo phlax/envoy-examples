@@ -4,7 +4,7 @@ FROM $BUILD_FROM
 
 RUN addgroup docker \
 	&& adduser envoydev -D -G docker
-RUN apk add bash curl docker-compose git jq
+RUN apk add bash curl docker-compose git jq redis
 WORKDIR /home/envoydev
 
 COPY ./run-envoy-example-tests /usr/local/bin
