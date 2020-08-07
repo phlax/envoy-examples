@@ -2,3 +2,23 @@
 
 
 echo "RUNNING ENVOY TESTS"
+
+ENVOYDEV_UMASK=${ENVOYDEV_UMASK:-027}
+ENVOY_REPO=${ENVOY_REPO:-https://github.com/envoyproxy/envoy}
+
+
+clone_envoy_repo () {
+    local git_args
+    if [ -d envoy ]; then
+	run_log "$(whoami)" "Testing mounted envoy directory"
+    else
+	read -ra git_args <<< "$ENVOY_REPO"
+	run_log "$(whoami)" "Clone envoy repository ($ENVOY_REPO)"
+	git clone "${git_args[@]}"
+    fi
+}
+
+umask "$ENVOYDEV_UMASK"
+clone_envoy_repo
+cd envoy
+./ci/verify_examples.sh
